@@ -2,13 +2,10 @@ import Dependencies.Version._
 
 name := "pureconfig-magnolia"
 
-crossScalaVersions := Seq(scala212, scala213)
+crossScalaVersions := Seq(scala31)
 
 libraryDependencies ++= Seq(
-  "com.propensive" %% "magnolia" % "0.17.0",
-  "org.scala-lang" % "scala-reflect" % scalaVersion.value % Provided,
-  // We're using shapeless for illTyped in tests.
-  "com.chuusai" %% "shapeless" % "2.3.9" % Test
+  "com.softwaremill.magnolia1_3" %% "magnolia" % "1.1.5"
 )
 
 developers := List(

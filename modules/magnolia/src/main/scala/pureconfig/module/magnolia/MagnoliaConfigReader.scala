@@ -1,8 +1,9 @@
 package pureconfig.module.magnolia
 
-import _root_.magnolia._
+import scala.reflect.ClassTag
 
-import pureconfig._
+import _root_.magnolia1.*
+import pureconfig.*
 import pureconfig.error.{ConfigReaderFailures, KeyNotFound, WrongSizeList}
 import pureconfig.generic.ProductHint.UseOrDefault
 import pureconfig.generic.error.InvalidCoproductOption
@@ -13,7 +14,7 @@ import pureconfig.generic.{CoproductHint, ProductHint}
 object MagnoliaConfigReader {
 
   def combine[A](ctx: CaseClass[ConfigReader, A])(implicit hint: ProductHint[A]): ConfigReader[A] =
-    if (ctx.typeName.full.startsWith("scala.Tuple")) combineTuple(ctx)
+    if (ctx.typeInfo.full.startsWith("scala.Tuple")) combineTuple(ctx)
     else if (ctx.isValueClass) combineValueClass(ctx)
     else combineCaseClass(ctx)
 
@@ -21,23 +22,22 @@ object MagnoliaConfigReader {
     new ConfigReader[A] {
       def from(cur: ConfigCursor): ConfigReader.Result[A] = {
         cur.asObjectCursor.flatMap { objCur =>
-          val actions = ctx.parameters.map { param => param.label -> hint.from(objCur, param.label) }.toMap
+          val actions = ctx.params.map { param => param.label -> hint.from(objCur, param.label) }.toMap
 
-          val res = ctx
-            .constructEither[ConfigReaderFailures, Param[ConfigReader, A]#PType] { param =>
-              val fieldHint = actions(param.label)
-              lazy val reader = param.typeclass
-              (fieldHint, param.default) match {
-                case (UseOrDefault(cursor, _), Some(defaultValue)) if cursor.isUndefined =>
-                  Right(defaultValue)
-                case (action, _) if reader.isInstanceOf[ReadsMissingKeys] || !action.cursor.isUndefined =>
-                  reader.from(action.cursor)
-                case _ =>
-                  cur.failed(KeyNotFound.forKeys(fieldHint.field, objCur.keys))
-              }
+          val paramsEithers = ctx.params.map { param =>
+            val fieldHint = actions(param.label)
+            lazy val reader = param.typeclass
+            (fieldHint, param.default) match {
+              case (UseOrDefault(cursor, _), Some(defaultValue)) if cursor.isUndefined =>
+                Right(defaultValue)
+              case (action, _) if reader.isInstanceOf[ReadsMissingKeys] || !action.cursor.isUndefined =>
+                reader.from(action.cursor)
+              case _ =>
+                cur.failed(KeyNotFound.forKeys(fieldHint.field, objCur.keys))
             }
-            .left
-            .map(_.reduce(_ ++ _))
+          }
+
+          val res = ConfigReader.Result.sequence(paramsEithers.toSeq).map(ctx.rawConstruct)
 
           val usedFields = actions.map(_._2.field).toSet
           ConfigReader.Result.zipWith(res, hint.bottom(objCur, usedFields).toLeft(()))((r, _) => r)
@@ -56,10 +56,10 @@ object MagnoliaConfigReader {
         collCur.flatMap {
           case Left(objCur) => combineCaseClass(ctx).from(objCur)
           case Right(listCur) =>
-            if (listCur.size != ctx.parameters.length) {
-              cur.failed(WrongSizeList(ctx.parameters.length, listCur.size))
+            if (listCur.size != ctx.params.length) {
+              cur.failed(WrongSizeList(ctx.params.length, listCur.size))
             } else {
-              val fields = ConfigReader.Result.sequence(ctx.parameters.zip(listCur.list).map { case (param, cur) =>
+              val fields = ConfigReader.Result.sequence(ctx.params.zip(listCur.list).toSeq.map { case (param, cur) =>
                 param.typeclass.from(cur)
               })
               fields.map(ctx.rawConstruct)
@@ -71,16 +71,16 @@ object MagnoliaConfigReader {
   private def combineValueClass[A](ctx: CaseClass[ConfigReader, A]): ConfigReader[A] =
     new ConfigReader[A] {
       def from(cur: ConfigCursor): ConfigReader.Result[A] =
-        ctx.constructMonadic[ConfigReader.Result, Param[ConfigReader, A]#PType](_.typeclass.from(cur))
+        ctx.params.head.typeclass.from(cur).map(readParam => ctx.rawConstruct(Seq(readParam)))
     }
 
   def dispatch[A](ctx: SealedTrait[ConfigReader, A])(implicit hint: CoproductHint[A]): ConfigReader[A] =
     new ConfigReader[A] {
       def from(cur: ConfigCursor): ConfigReader.Result[A] = {
         def readerFor(option: String) =
-          ctx.subtypes.find(_.typeName.short == option).map(_.typeclass)
+          ctx.subtypes.find(_.typeInfo.short == option).map(_.typeclass)
 
-        hint.from(cur, ctx.subtypes.map(_.typeName.short).sorted).flatMap {
+        hint.from(cur, ctx.subtypes.map(_.typeInfo.short).sorted).flatMap {
           case CoproductHint.Use(cur, option) =>
             readerFor(option) match {
               case Some(value) => value.from(cur)

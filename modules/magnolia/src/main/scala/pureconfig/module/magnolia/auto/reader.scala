@@ -1,24 +1,19 @@
 package pureconfig.module.magnolia.auto
 
-import scala.language.experimental.macros
-
-import magnolia._
+import magnolia1._
 
 import pureconfig.generic.{CoproductHint, ProductHint}
-import pureconfig.module.magnolia.{ExportedMagnolia, MagnoliaConfigReader}
+import pureconfig.module.magnolia.MagnoliaConfigReader
 import pureconfig.{ConfigReader, Exported}
 
 /** An object that, when imported, provides implicit `ConfigReader` instances for value classes, tuples, case classes
   * and sealed traits. The generation of `ConfigReader`s is done by Magnolia.
   */
-object reader {
-  type Typeclass[A] = ConfigReader[A]
+object reader extends AutoDerivation[ConfigReader] {
+  def join[A](ctx: CaseClass[ConfigReader, A]): ConfigReader[A] =
+    MagnoliaConfigReader.combine(ctx)(ProductHint.default)
 
-  def combine[A: ProductHint](ctx: CaseClass[ConfigReader, A]): ConfigReader[A] =
-    MagnoliaConfigReader.combine(ctx)
-
-  def dispatch[A: CoproductHint](ctx: SealedTrait[ConfigReader, A]): ConfigReader[A] =
-    MagnoliaConfigReader.dispatch(ctx)
-
-  implicit def exportReader[A]: Exported[ConfigReader[A]] = macro ExportedMagnolia.exportedMagnolia[ConfigReader, A]
+  def split[A](ctx: SealedTrait[ConfigReader, A]): ConfigReader[A] =
+    MagnoliaConfigReader.dispatch(ctx)(CoproductHint.default)
 }
+

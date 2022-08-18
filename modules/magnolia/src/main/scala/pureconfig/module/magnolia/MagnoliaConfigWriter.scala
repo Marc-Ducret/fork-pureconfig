@@ -1,9 +1,9 @@
 package pureconfig.module.magnolia
 
-import scala.collection.JavaConverters._
+import scala.jdk.CollectionConverters._
 import scala.reflect.ClassTag
 
-import _root_.magnolia._
+import _root_.magnolia1._
 import com.typesafe.config.{ConfigValue, ConfigValueFactory}
 
 import pureconfig._
@@ -14,19 +14,19 @@ import pureconfig.generic.{CoproductHint, ProductHint}
 object MagnoliaConfigWriter {
 
   def combine[A](ctx: CaseClass[ConfigWriter, A])(implicit hint: ProductHint[A]): ConfigWriter[A] =
-    if (ctx.typeName.full.startsWith("scala.Tuple")) combineTuple(ctx)
+    if (ctx.typeInfo.full.startsWith("scala.Tuple")) combineTuple(ctx)
     else if (ctx.isValueClass) combineValueClass(ctx)
     else combineCaseClass(ctx)
 
   private def combineCaseClass[A](ctx: CaseClass[ConfigWriter, A])(implicit hint: ProductHint[A]): ConfigWriter[A] =
     new ConfigWriter[A] {
       def to(a: A): ConfigValue = {
-        val fieldValues = ctx.parameters.map { param =>
+        val fieldValues = ctx.params.map { param =>
           val valueOpt = param.typeclass match {
             case tc: WritesMissingKeys[param.PType @unchecked] =>
-              tc.toOpt(param.dereference(a))
+              tc.toOpt(param.deref(a))
             case tc =>
-              Some(tc.to(param.dereference(a)))
+              Some(tc.to(param.deref(a)))
           }
           hint.to(valueOpt, param.label)
         }
@@ -37,20 +37,20 @@ object MagnoliaConfigWriter {
   private def combineTuple[A](ctx: CaseClass[ConfigWriter, A]): ConfigWriter[A] =
     new ConfigWriter[A] {
       override def to(a: A): ConfigValue =
-        ConfigValueFactory.fromIterable(ctx.parameters.map { param => param.typeclass.to(param.dereference(a)) }.asJava)
+        ConfigValueFactory.fromIterable(ctx.params.map { param => param.typeclass.to(param.deref(a)) }.toSeq.asJava)
     }
 
   private def combineValueClass[A](ctx: CaseClass[ConfigWriter, A]): ConfigWriter[A] =
     new ConfigWriter[A] {
       override def to(a: A): ConfigValue =
-        ctx.parameters.map { param => param.typeclass.to(param.dereference(a)) }.head
+        ctx.params.map { param => param.typeclass.to(param.deref(a)) }.head
     }
 
-  def dispatch[A: ClassTag](ctx: SealedTrait[ConfigWriter, A])(implicit hint: CoproductHint[A]): ConfigWriter[A] =
+  def dispatch[A](ctx: SealedTrait[ConfigWriter, A])(implicit hint: CoproductHint[A]): ConfigWriter[A] =
     new ConfigWriter[A] {
       def to(a: A): ConfigValue =
-        ctx.dispatch(a) { subtype =>
-          hint.to(subtype.typeclass.to(subtype.cast(a)), subtype.typeName.short)
+        ctx.choose(a) { subtype =>
+          hint.to(subtype.typeclass.to(subtype.cast(a)), subtype.typeInfo.short)
         }
     }
 }
